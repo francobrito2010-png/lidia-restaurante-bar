@@ -333,6 +333,23 @@ body.menu-open header .brand{opacity:0;pointer-events:none}
 .m-cap small{font-size:11.5px;letter-spacing:.08em;color:var(--cream-dim)}
 @media(max-width:860px){.moments-grid{grid-template-columns:1fr 1fr}}
 @media(max-width:480px){.moments-grid{grid-template-columns:1fr}.moment{aspect-ratio:4/3}}
+/* botón de música */
+.music-btn{position:fixed;right:18px;bottom:calc(18px + env(safe-area-inset-bottom,0px));z-index:72;
+  width:50px;height:50px;border-radius:50%;border:1px solid var(--line);
+  background:rgba(5,9,26,.55);backdrop-filter:blur(8px);color:var(--gold-hi);
+  display:grid;place-items:center;cursor:pointer;transition:transform .3s,background .3s;
+  box-shadow:0 10px 30px -12px rgba(0,0,0,.6)}
+.music-btn:hover{background:rgba(5,9,26,.82);transform:scale(1.06)}
+.music-btn svg{width:20px;height:20px;fill:currentColor}
+.music-btn .mi-eq{display:none;gap:3px;align-items:center;height:18px}
+.music-btn .mi-eq i{width:3px;height:16px;background:currentColor;border-radius:2px;transform-origin:center;animation:eqb 1s ease-in-out infinite}
+.music-btn .mi-eq i:nth-child(2){animation-delay:.25s}
+.music-btn .mi-eq i:nth-child(3){animation-delay:.5s}
+@keyframes eqb{0%,100%{transform:scaleY(.35)}50%{transform:scaleY(1)}}
+.music-btn[aria-pressed="true"]{background:rgba(201,162,75,.2)}
+.music-btn[aria-pressed="true"] .mi-off{display:none}
+.music-btn[aria-pressed="true"] .mi-eq{display:flex}
+@media (prefers-reduced-motion:reduce){.music-btn .mi-eq i{animation:none;transform:scaleY(.7)}}
 
 /* space / blossoms */
 .blossom-sec{background:linear-gradient(180deg,var(--paper) 0%,#0c1631 40%,var(--ink) 100%);color:var(--cream);
@@ -415,6 +432,11 @@ footer{background:var(--ink);color:var(--cream-dim);padding-block:clamp(50px,7vw
 <body>
 
 <div class="petals-global" id="petalsGlobal" aria-hidden="true"></div>
+
+<button class="music-btn" id="musicBtn" aria-label="Música ambiente" aria-pressed="false" title="Música">
+  <svg class="mi-off" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6z"/></svg>
+  <span class="mi-eq" aria-hidden="true"><i></i><i></i><i></i></span>
+</button>
 
 <header id="hdr">
   <div class="wrap nav">
@@ -955,6 +977,73 @@ const PLATES=[
       autoplay:{delay:3200,disableOnInteraction:false},
       pagination:{el:'#platesPag',clickable:true}});
   }
+})();
+
+/* ---------- MÚSICA: arpa generativa original (Web Audio) ---------- */
+(function(){
+  const btn=document.getElementById('musicBtn'); if(!btn) return;
+  const AC=window.AudioContext||window.webkitAudioContext; if(!AC){btn.style.display='none';return;}
+  const scale=[220,246.94,277.18,329.63,369.99,440,493.88,554.37,659.25,739.99,880];
+  let ctx,master,dry,wet,reverb,timer=null,playing=false,nextT=0,cur=5,inited=false;
+  const bufs={};
+  function pluck(freq){
+    const sr=ctx.sampleRate,dur=3.2,n=Math.floor(sr*dur);
+    const buf=ctx.createBuffer(1,n,sr),d=buf.getChannelData(0);
+    const N=Math.max(2,Math.round(sr/freq)),line=new Float32Array(N);
+    for(let i=0;i<N;i++)line[i]=Math.random()*2-1;
+    let idx=0;const damp=0.9955;
+    for(let i=0;i<n;i++){const c=line[idx],nx=line[(idx+1)%N];const v=(c+nx)*0.5*damp;d[i]=c;line[idx]=v;idx=(idx+1)%N;}
+    const f=Math.floor(sr*0.2);for(let i=0;i<f;i++)d[n-1-i]*=i/f;
+    return buf;
+  }
+  function getBuf(fr){return bufs[fr]||(bufs[fr]=pluck(fr));}
+  function makeReverb(){
+    const len=Math.floor(ctx.sampleRate*2.6),ir=ctx.createBuffer(2,len,ctx.sampleRate);
+    for(let c=0;c<2;c++){const a=ir.getChannelData(c);for(let i=0;i<len;i++)a[i]=(Math.random()*2-1)*Math.pow(1-i/len,2.8);}
+    const cv=ctx.createConvolver();cv.buffer=ir;return cv;
+  }
+  function init(){
+    ctx=new AC();
+    master=ctx.createGain();master.gain.value=0.0001;master.connect(ctx.destination);
+    reverb=makeReverb();
+    dry=ctx.createGain();dry.gain.value=0.55;dry.connect(master);
+    wet=ctx.createGain();wet.gain.value=0.9;wet.connect(reverb);reverb.connect(master);
+    inited=true;
+  }
+  function note(t,fr,vel){
+    const s=ctx.createBufferSource();s.buffer=getBuf(fr);
+    const g=ctx.createGain();g.gain.setValueAtTime(0.0001,t);g.gain.linearRampToValueAtTime(vel,t+0.01);
+    s.connect(g);g.connect(dry);g.connect(wet);s.start(t);s.stop(t+3.3);
+  }
+  function stepIdx(){
+    const r=Math.random();
+    if(r<0.14) cur+=(Math.random()<0.5?-1:1)*3; else cur+=(Math.random()<0.5?-1:1)*(Math.random()<0.6?1:2);
+    if(cur<0)cur=1; if(cur>scale.length-1)cur=scale.length-2; return cur;
+  }
+  function schedule(){
+    if(!playing) return;
+    const ahead=ctx.currentTime+1.6;
+    while(nextT<ahead){
+      const i=stepIdx(); note(nextT,scale[i],0.85);
+      if(Math.random()<0.28) note(nextT+0.05,scale[Math.min(scale.length-1,i+2)],0.4);
+      nextT+=0.45+Math.random()*0.5;
+    }
+  }
+  function start(){
+    if(!inited) init();
+    if(ctx.state==='suspended') ctx.resume();
+    master.gain.cancelScheduledValues(ctx.currentTime);
+    master.gain.setValueAtTime(Math.max(0.0001,master.gain.value),ctx.currentTime);
+    master.gain.exponentialRampToValueAtTime(0.15,ctx.currentTime+1.4);
+    nextT=ctx.currentTime+0.2;playing=true;btn.setAttribute('aria-pressed','true');
+    schedule();timer=setInterval(schedule,700);
+  }
+  function stop(){
+    playing=false;btn.setAttribute('aria-pressed','false');
+    if(timer){clearInterval(timer);timer=null;}
+    if(master){master.gain.cancelScheduledValues(ctx.currentTime);master.gain.setValueAtTime(Math.max(0.0001,master.gain.value),ctx.currentTime);master.gain.exponentialRampToValueAtTime(0.0001,ctx.currentTime+0.9);}
+  }
+  btn.addEventListener('click',()=>{try{playing?stop():start();}catch(e){}});
 })();
 
 /* ---------- BOOT ---------- */
