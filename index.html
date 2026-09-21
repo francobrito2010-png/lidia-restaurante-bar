@@ -1043,7 +1043,16 @@ const PLATES=[
     if(timer){clearInterval(timer);timer=null;}
     if(master){master.gain.cancelScheduledValues(ctx.currentTime);master.gain.setValueAtTime(Math.max(0.0001,master.gain.value),ctx.currentTime);master.gain.exponentialRampToValueAtTime(0.0001,ctx.currentTime+0.9);}
   }
-  btn.addEventListener('click',()=>{try{playing?stop():start();}catch(e){}});
+  let wantOn=true, armed=true; btn.setAttribute('aria-pressed','true');
+  function disarm(){armed=false;['pointerdown','touchstart','keydown','wheel','scroll'].forEach(ev=>window.removeEventListener(ev,firstGesture,true));}
+  function firstGesture(e){if(!armed)return; if(e&&e.target&&btn.contains(e.target)){disarm();return;} disarm(); if(wantOn&&!playing){try{start();}catch(_){}}}
+  ['pointerdown','touchstart','keydown','wheel','scroll'].forEach(ev=>window.addEventListener(ev,firstGesture,{capture:true,passive:true}));
+  btn.addEventListener('click',()=>{try{
+    if(playing){stop();wantOn=false;}
+    else if(wantOn){wantOn=false;btn.setAttribute('aria-pressed','false');}
+    else{wantOn=true;start();}
+    armed=false;
+  }catch(e){}});
 })();
 
 /* ---------- BOOT ---------- */
